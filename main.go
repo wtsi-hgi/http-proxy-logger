@@ -1,97 +1,89 @@
 package main
 
 import (
-	// "log"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"strconv"
-
-	"github.com/go-chi/chi"
-	flags "github.com/jessevdk/go-flags"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-	httplog "github.com/stn1slv/chi-httplog"
+	"sync"
+	"sync/atomic"
 )
 
-var opts struct {
-	Port     int    `short:"p" long:"port" env:"PORT" default:"7070" description:"port"`
-	Endpoint string `short:"e" long:"endpoint" env:"ENDPOINT" default:"/" description:"endpoint"`
-	Verb     string `short:"v" long:"verb" env:"VERB" default:"GET" description:"HTTP verb"`
-	//Logging settings
-	JSONlog bool `long:"jsonLog" env:"JSON_LOG" description:"JSON format for logs"`
-	//Stub settings
-	StubMode bool   `short:"s" long:"stubMode" env:"STUB_MODE" description:"stub mode"`
-	StubCode int    `long:"stubCode" env:"STUB_CODE" default:"200" description:"stub response code"`
-	StubBody string `long:"stubBody" env:"STUB_BODY" default:"" description:"stub response body"`
-	//Proxy settings
-	TargetService string `long:"targetService" env:"TARGET" default:"http://localhost:8080" description:"target endpoint for proxy"`
+// Request counter
+var reqCounter int32
+var wg sync.WaitGroup
+
+type DebugTransport struct{}
+
+func (DebugTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	wg.Add(1)
+	defer wg.Done()
+	atomic.AddInt32(&reqCounter, 1)
+
+	requestDump, err := httputil.DumpRequestOut(r, true)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("---REQUEST %d---\n\n%s\n\n", reqCounter, string(requestDump))
+
+	response, err := http.DefaultTransport.RoundTrip(r)
+	responseDump, err := httputil.DumpResponse(response, true)
+	if err != nil {
+		// copying the response body did not work
+		return nil, err
+	}
+
+	log.Printf("---RESPONSE %d---\n\n%s\n\n", reqCounter, string(responseDump))
+	return response, err
+}
+
+// Get env var or default
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+// Get the port to listen on
+func getListenAddress() string {
+	port := getEnv("PORT", "1338")
+	return ":" + port
+}
+
+func getTarget() string {
+	target := getEnv("TARGET", "http://example.com")
+	return target
 }
 
 func main() {
-	// zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	target, _ := url.Parse(getTarget())
+	log.Printf("Forwarding %s -> %s\n", getListenAddress(), target)
 
-	log.Info().Msg("HTTP Proxy logger is starting")
-	if _, err := flags.Parse(&opts); err != nil {
-		log.Fatal().Err(err).Msg("Error parse flags")
-		os.Exit(1)
-	}
-	log.Info().Msg("Listening port: " + strconv.Itoa(opts.Port))
+	proxy := httputil.NewSingleHostReverseProxy(target)
 
-	// Logger
-	logger := httplog.NewLogger("http-logger-proxy", httplog.Options{
-		JSON: opts.JSONlog,
-		// Concise: true,
-		Body: true,
-		// Tags: map[string]string{
-		// 	"version": "v1.0-81aa4244d9fc8076a",
-		// 	"env":     "dev",
-		// },
+	proxy.Transport = DebugTransport{}
+
+	http.HandleFunc("/", func(res http.ResponseWriter, req *http.Request) {
+		// Update the headers to allow for SSL redirection
+		req.URL.Host = target.Host
+		req.URL.Scheme = target.Scheme
+		req.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
+		req.Host = target.Host
+
+		// Note that ServeHttp is non blocking and uses a go routine under the hood
+		proxy.ServeHTTP(res, req)
 	})
 
-	// Service
-	r := chi.NewRouter()
-	r.Use(httplog.RequestLogger(logger))
+	/* d := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		d(r) // call default director
 
-	fn := func(w http.ResponseWriter, r *http.Request) {}
-	if opts.StubMode {
-		log.Info().Msg("Stub mode")
-		fn = StubHandler
-	} else {
-		log.Info().Msg("Proxy mode")
-		fn = ProxyHandler
+		r.Host = target.Host // set Host header as expected by target
+	}*/
+
+	if err := http.ListenAndServe(getListenAddress(), nil); err != nil {
+		panic(err)
 	}
-	switch opts.Verb {
-	case "GET":
-		r.Get(opts.Endpoint, fn)
-	case "POST":
-		r.Post(opts.Endpoint, fn)
-	case "DELETE":
-		r.Delete(opts.Endpoint, fn)
-	case "PUT":
-		r.Put(opts.Endpoint, fn)
-	}
-
-	http.ListenAndServe(":"+strconv.Itoa(opts.Port), r)
-}
-
-//StubHandler is handler for stub operation
-func StubHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Content-Type", "text/plain")
-	w.WriteHeader(opts.StubCode)
-	w.Write([]byte(opts.StubBody))
-}
-
-//ProxyHandler is handler for proxy operation
-func ProxyHandler(w http.ResponseWriter, r *http.Request) {
-	target, err := url.Parse(opts.TargetService)
-	log.Printf("forwarding to -> %s%s\n", target.Scheme, target.Host)
-
-	if err != nil {
-		log.Fatal().Err(err)
-	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.ServeHTTP(w, r)
 }
