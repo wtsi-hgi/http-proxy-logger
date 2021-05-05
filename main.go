@@ -28,6 +28,9 @@ func (DebugTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	log.Printf("---REQUEST %d---\n\n%s\n\n", reqCounter, string(requestDump))
 
 	response, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
 	responseDump, err := httputil.DumpResponse(response, true)
 	if err != nil {
 		// copying the response body did not work
@@ -65,25 +68,14 @@ func main() {
 
 	proxy.Transport = DebugTransport{}
 
-	http.HandleFunc("/", func(res http.ResponseWriter, req *http.Request) {
-		// Update the headers to allow for SSL redirection
-		req.URL.Host = target.Host
-		req.URL.Scheme = target.Scheme
-		req.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
-		req.Host = target.Host
-
-		// Note that ServeHttp is non blocking and uses a go routine under the hood
-		proxy.ServeHTTP(res, req)
-	})
-
-	/* d := proxy.Director
+	d := proxy.Director
 	proxy.Director = func(r *http.Request) {
 		d(r) // call default director
 
 		r.Host = target.Host // set Host header as expected by target
-	}*/
+	}
 
-	if err := http.ListenAndServe(getListenAddress(), nil); err != nil {
+	if err := http.ListenAndServe(getListenAddress(), proxy); err != nil {
 		panic(err)
 	}
 }
