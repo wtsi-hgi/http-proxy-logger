@@ -6,26 +6,22 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"sync"
 	"sync/atomic"
 )
 
 // Request counter
 var reqCounter int32
-var wg sync.WaitGroup
 
 type DebugTransport struct{}
 
 func (DebugTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	wg.Add(1)
-	defer wg.Done()
-	atomic.AddInt32(&reqCounter, 1)
+	counter := atomic.AddInt32(&reqCounter, 1)
 
 	requestDump, err := httputil.DumpRequestOut(r, true)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("---REQUEST %d---\n\n%s\n\n", reqCounter, string(requestDump))
+	log.Printf("---REQUEST %d---\n\n%s\n\n", counter, string(requestDump))
 
 	response, err := http.DefaultTransport.RoundTrip(r)
 	if err != nil {
@@ -37,7 +33,7 @@ func (DebugTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 
-	log.Printf("---RESPONSE %d---\n\n%s\n\n", reqCounter, string(responseDump))
+	log.Printf("---RESPONSE %d---\n\n%s\n\n", counter, string(responseDump))
 	return response, err
 }
 
