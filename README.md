@@ -1,40 +1,24 @@
 # HTTP proxy logger
-This is HTTP proxy which prints http requests and responses to console including http body.
-For example:
+
+http proxy logger can be used in between a client and a server to log all their
+requests and responses to the console.
+
+This is based on https://github.com/stn1slv/http-proxy-logger/ but changes the
+output to first decompress gzip'd responses, and to only show the head and tail
+of longer responses. It also shows the roundtrip time.
+
+
+## Build
 ```
-2021/05/05 03:50:44 ---REQUEST 3---
-
-POST /mocking/contacts HTTP/1.1
-Host: demo7704619.mockable.io
-User-Agent: PostmanRuntime/7.28.0
-Content-Length: 63
-Accept: */*
-Accept-Encoding: gzip, deflate, br
-Cache-Control: no-cache
-Content-Type: application/json
-X-Forwarded-For: 172.17.0.1
-
-{
-    "firstName": "Stanislav",
-    "lastName": "Deviatov"
-}
-
-2021/05/05 03:50:44 ---RESPONSE 3---
-
-HTTP/1.1 201 Created
-Content-Length: 68
-Access-Control-Allow-Origin: *
-Content-Type: application/json; charset=UTF-8
-Date: Wed, 05 May 2021 03:50:45 GMT
-Server: Google Frontend
-X-Cloud-Trace-Context: 83ac5937ae7ba8f3ef96ee941227b1b0
-
-{
-  "salesforceId": "a0C3L0000008ZSNUA2",
-  "action": "updated"
-}
+go build -o proxylogger
 ```
-## Build image
-`docker build -t stn1slv/http-proxy-logger .`
-## Start
-`docker run --rm -it -p 8888:8888 -e PORT=8888 -e TARGET=http://demo7704619.mockable.io stn1slv/http-proxy-logger`
+
+Then copy proxylogger in to your path.
+
+## Usage
+If your client talks to server http://domain.com:1234, instead configure it to
+talk to http://localhost:1338 and then:
+
+```
+TARGET=http://domain.com:1234 PORT=1338 proxylogger
+```

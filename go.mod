@@ -1,3 +1,3 @@
-module github.com/stn1slv/http-proxy-logger
+module github.com/wtsi-hgi/http-proxy-logger
 
 go 1.16
